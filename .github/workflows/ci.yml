@@ -77,6 +77,13 @@ jobs:
           cargo test --locked --all-features kiro::cli::tests
           cargo test --locked --all-features commands::kiro_cli_cmd::tests
 
+      - name: Test usage and authentication regressions
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --all-features clients::kiro_client::tests
+          cargo test --locked --all-features commands::common::tests
+          cargo test --locked --all-features auto_switch::tests
+
       - name: Check Rust formatting (advisory until upstream is clean)
         continue-on-error: true
         working-directory: src-tauri

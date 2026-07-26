@@ -78,9 +78,9 @@ jobs:
           releaseBody: |
             ## 本版本修复
 
-            - 修复 Kiro CLI 2.14.2 切换 Google/GitHub 后缺少 provider、显示未登录的问题
-            - CLI-only 切换不再依赖 Kiro IDE 安装状态
-            - CLI 数据库写入失败会明确显示失败，不再误报切换成功
+            - 修复 Google/GitHub/BuilderId 配额请求遗漏 profileArn 导致额度获取异常的问题
+            - 修复认证失败与封禁状态误判，避免正常账号被错误标记
+            - Enterprise 配额请求继续不携带 profileArn，保持企业账号兼容性
 
             此版本由 kenconnet666 的 fork 通过 GitHub Actions 构建。
           releaseDraft: false

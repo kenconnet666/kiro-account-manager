@@ -362,8 +362,20 @@ async fn resolve_current_account_by_usage(
         }
     };
     let regions = crate::clients::kiro_client::usage_limits_region_candidates(region, false);
+    let profile_arn = local_token.profile_arn.as_deref().or_else(|| {
+        accounts.iter().find_map(|account| {
+            account
+                .refresh_token
+                .as_ref()
+                .zip(local_token.refresh_token.as_ref())
+                .and_then(|(account_token, local_token)| {
+                    (account_token == local_token).then_some(account.profile_arn.as_deref())
+                })
+                .flatten()
+        })
+    });
     let usage = match client
-        .get_usage_limits_with_region_fallback(access_token, &machine_id, &regions)
+        .get_usage_limits_with_region_fallback(access_token, &machine_id, &regions, profile_arn)
         .await
     {
         Ok((_region, data)) => data,

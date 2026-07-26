@@ -198,6 +198,10 @@ pub async fn sync_account(
 
     let mut store = lock_store(&state.store, "store")?;
     let result = if let Some(a) = store.accounts.iter_mut().find(|a| a.id == id) {
+        let was_invalid_and_auto_disabled = !a.enabled
+            && matches!(a.status.as_str(), "invalid" | "失效" | "已失效")
+            && a.disabled_reason.as_deref() != Some("ManuallyDisabled");
+
         // 如果生成了新的 machine_id，保存它（所有账号都需要）
         if account.machine_id.is_some()
             && a.machine_id.as_ref().is_none_or(|id| id.trim().is_empty())
@@ -237,6 +241,14 @@ pub async fn sync_account(
             // 直接移动所有权，避免 clone
             a.usage_data = Some(usage_data.usage_data);
             update_account_status(a, usage_data.is_banned, usage_data.is_auth_error);
+
+            // 兼容旧版本留下的 invalid + disabled 记录。只有确认配额请求成功且账号
+            // 已恢复为可用状态时才重新启用；用户主动禁用的账号带有专用标记，不会被覆盖。
+            if was_invalid_and_auto_disabled
+                && matches!(a.status.as_str(), "active" | "overage")
+            {
+                a.enabled = true;
+            }
 
             // 从 usage_data 中提取并更新 email 和 user_id
             if let Some(user_info) = a.usage_data.as_ref().and_then(|d| d.get("userInfo")) {
@@ -1545,6 +1557,13 @@ pub fn update_account(
         // 启用/禁用
         if let Some(enabled) = params.enabled {
             store.accounts[idx].enabled = enabled;
+            if enabled {
+                if store.accounts[idx].disabled_reason.as_deref() == Some("ManuallyDisabled") {
+                    store.accounts[idx].disabled_reason = None;
+                }
+            } else if store.accounts[idx].disabled_reason.is_none() {
+                store.accounts[idx].disabled_reason = Some("ManuallyDisabled".to_string());
+            }
         }
         if let Some(proxy_config) = params.proxy_config {
             let has_proxy_values = !proxy_config.host.trim().is_empty()

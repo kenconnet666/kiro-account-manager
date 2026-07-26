@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import {
   normalizeAccountStatus,
   isActiveStatus,
+  isAuthenticationError,
   isUnavailableStatus,
   getAccountStatusMeta
 } from './accountStatus'
@@ -34,6 +35,10 @@ assert.deepEqual(getAccountStatusMeta(cappedAccount), {
   label: '封顶',
   tone: 'warning'
 })
+
+assert.equal(isAuthenticationError('HTTP 400: Invalid profileArn.'), false)
+assert.equal(isAuthenticationError('AUTH_ERROR: token expired'), true)
+assert.equal(isAuthenticationError('request failed with HTTP 401'), true)
 
 assert.match(autoRefresh, /export function useAutoRefresh\(\)/)
 assert.match(autoRefresh, /return \{\}/)

@@ -7,6 +7,28 @@ const BANNED_STATUSES = new Set(['banned'])
 const INVALID_STATUSES = new Set(['invalid'])
 const EXPIRED_STATUSES = new Set(['expired'])
 
+const EXPLICIT_TOKEN_FAILURE_PATTERNS = [
+  /\b(?:access|refresh|auth(?:entication)?|bearer|id)?\s*token\b\s*(?:is|was|has been|has)?\s*(?:invalid|expired|revoked|not valid)\b/i,
+  /\b(?:invalid|expired|revoked)\s+(?:access|refresh|auth(?:entication)?|bearer|id)?\s*token\b/i,
+  /\b(?:invalidtoken|expiredtoken)(?:exception)?\b/i,
+  /\btoken\b\s+(?:validation|verification)\s+failed\b/i,
+  /(?:token|令牌|凭证|认证|登录状态)[^\r\n]{0,16}(?:无效|失效|过期)/i,
+  /(?:无效|失效|过期)[^\r\n]{0,16}(?:token|令牌|凭证|认证|登录状态)/i
+]
+
+/** Only classify explicit authentication failures; generic "invalid" errors are not token failures. */
+export function isAuthenticationError(error: unknown): boolean {
+  const message = String(error ?? '').trim()
+  if (!message) return false
+
+  if (/(?:^|\b)AUTH_ERROR:/i.test(message)) return true
+  if (/\bUnauthorized\b/i.test(message)) return true
+  if (/\bHTTP(?:\s+(?:status|code))?\s*[:=]?\s*401\b/i.test(message)) return true
+  if (/\bstatus(?:\s+code)?\s*[:=]\s*401\b/i.test(message)) return true
+
+  return EXPLICIT_TOKEN_FAILURE_PATTERNS.some(pattern => pattern.test(message))
+}
+
 function resolveStatusInput(statusOrAccount: string | Account | any, usageData?: AccountUsageData) {
   if (statusOrAccount && typeof statusOrAccount === 'object' && !Array.isArray(statusOrAccount)) {
     return {

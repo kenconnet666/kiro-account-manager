@@ -5,7 +5,7 @@ import { Copy, Check, RefreshCw, User, CreditCard, Shield, Cpu, Loader2, FileTex
 import { useApp } from '../../../hooks/useApp'
 import { useDialog } from '../../../contexts/DialogContext'
 import { formatUsage, getAccountDisplayName, calcTotalUsageWithExtras } from '../../../utils/accountStats'
-import { getAccountStatusMeta, isBannedStatus } from '../../../utils/accountStatus'
+import { getAccountStatusMeta, isAuthenticationError, isBannedStatus } from '../../../utils/accountStatus'
 import { getProviderDisplayName, isGitHubProvider } from '../../../utils/accountProvider'
 import {
   DialogRoot,
@@ -213,7 +213,7 @@ function AccountDetailModal({ account, onClose, onRefresh }: AccountDetailModalP
       let status = account.status
       if (errorMsg.includes('BANNED')) {
         status = 'banned'
-      } else if (errorMsg.includes('AUTH_ERROR') || errorMsg.includes('401') || errorMsg.includes('invalid') || errorMsg.includes('失效')) {
+      } else if (isAuthenticationError(errorMsg)) {
         status = 'invalid'
       }
       setForm(prev => ({ ...prev, status }))

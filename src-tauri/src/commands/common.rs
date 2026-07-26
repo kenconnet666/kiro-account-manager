@@ -83,38 +83,46 @@ pub fn resolve_idc_client_id_hash(
     client_id_hash: Option<&str>,
     start_url: Option<&str>,
 ) -> Result<String, String> {
+    let provider = provider.trim();
+    let is_builder_id = provider.eq_ignore_ascii_case("BuilderId");
+    let is_enterprise = provider.eq_ignore_ascii_case("Enterprise");
+
     // 1. 已存 hash 优先
     let hash = if let Some(hash) = client_id_hash.map(str::trim).filter(|h| !h.is_empty()) {
         hash.to_string()
     } else {
         // 2. 按 provider 兜底
-        match provider {
-            "BuilderId" => match start_url.map(str::trim).filter(|s| !s.is_empty()) {
+        if is_builder_id {
+            match start_url.map(str::trim).filter(|s| !s.is_empty()) {
                 Some(url) => calculate_client_id_hash(url),
                 None => KIRO_BUILDER_ID_CLIENT_ID_HASH.to_string(),
-            },
-            "Enterprise" => {
-                let url = start_url
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .ok_or("Enterprise 账号必须提供 start_url 或 client_id_hash")?;
-                calculate_client_id_hash(url)
             }
-            other => return Err(format!("未知的 IdC Provider: {other}")),
+        } else if is_enterprise {
+            let url = start_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or("Enterprise 账号必须提供 start_url 或 client_id_hash")?;
+            calculate_client_id_hash(url)
+        } else {
+            return Err(format!("未知的 IdC Provider: {provider}"));
         }
     };
 
     // 3. Enterprise 硬校验
-    if provider == "Enterprise" {
+    if is_enterprise {
         ensure_enterprise_client_id_hash(&hash)?;
     }
     Ok(hash)
 }
 
 pub fn resolve_default_profile_arn(provider: Option<&str>) -> &'static str {
-    match provider {
-        Some("Github") | Some("Google") => KIRO_SOCIAL_PROFILE_ARN,
-        _ => KIRO_BUILDER_ID_PROFILE_ARN,
+    if provider.is_some_and(|value| {
+        let value = value.trim();
+        value.eq_ignore_ascii_case("Github") || value.eq_ignore_ascii_case("Google")
+    }) {
+        KIRO_SOCIAL_PROFILE_ARN
+    } else {
+        KIRO_BUILDER_ID_PROFILE_ARN
     }
 }
 
@@ -166,11 +174,12 @@ pub fn resolve_profile_arn_with_fallback(
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
-    match provider {
-        Some("Enterprise") => None,
-        provider => account_profile_arn
+    if provider.is_some_and(|value| value.trim().eq_ignore_ascii_case("Enterprise")) {
+        None
+    } else {
+        account_profile_arn
             .map(String::from)
-            .or_else(|| Some(resolve_default_profile_arn(provider).to_string())),
+            .or_else(|| Some(resolve_default_profile_arn(provider).to_string()))
     }
 }
 
@@ -478,9 +487,11 @@ async fn refresh_token_by_provider_inner(
         });
     }
 
-    let provider = account.provider.as_deref().unwrap_or("Google");
+    let provider = account.provider.as_deref().unwrap_or("Google").trim();
+    let is_builder_id = provider.eq_ignore_ascii_case("BuilderId");
+    let is_enterprise = provider.eq_ignore_ascii_case("Enterprise");
 
-    if provider == "BuilderId" || provider == "Enterprise" {
+    if is_builder_id || is_enterprise {
         let metadata = RefreshMetadata {
             client_id: account.client_id.clone(),
             client_secret: account.client_secret.clone(),
@@ -490,12 +501,17 @@ async fn refresh_token_by_provider_inner(
         };
         let region = metadata.region.as_deref().unwrap_or("us-east-1");
         // Enterprise 使用保存的 start_url
-        let start_url = if provider == "Enterprise" {
+        let start_url = if is_enterprise {
             account.start_url.clone()
         } else {
             None
         };
-        let idc_provider = IdcProvider::new(provider, region, start_url);
+        let canonical_provider = if is_enterprise {
+            "Enterprise"
+        } else {
+            "BuilderId"
+        };
+        let idc_provider = IdcProvider::new(canonical_provider, region, start_url);
         let auth = idc_provider.refresh_token(refresh_token, metadata).await?;
         Ok(RefreshResult {
             access_token: auth.access_token,
@@ -550,7 +566,10 @@ async fn get_usage_by_account_inner(
     use crate::clients::kiro_client::{usage_limits_region_candidates, KiroClient};
 
     let ctx = resolve_kiro_call_context(account, "us-east-1");
-    let is_enterprise = account.provider.as_deref() == Some("Enterprise");
+    let is_enterprise = account
+        .provider
+        .as_deref()
+        .is_some_and(|provider| provider.trim().eq_ignore_ascii_case("Enterprise"));
     let regions = usage_limits_region_candidates(&ctx.region, is_enterprise);
 
     let client = if use_account_proxy {
@@ -559,9 +578,14 @@ async fn get_usage_by_account_inner(
         KiroClient::new()?
     };
 
-    // getUsageLimits 不带 profileArn；企业号优先账号 region，再回退常见 region
+    // Social/BuilderId 需要 profileArn；Enterprise 保持 None，避免 API 返回 400。
     let (used_region, usage_data) = match client
-        .get_usage_limits_with_region_fallback(access_token, &ctx.machine_id, &regions)
+        .get_usage_limits_with_region_fallback(
+            access_token,
+            &ctx.machine_id,
+            &regions,
+            ctx.profile_arn.as_deref(),
+        )
         .await
     {
         Ok(v) => v,
@@ -615,7 +639,9 @@ pub async fn get_usage_by_provider_with_machine_id(
     temp_account.machine_id = Some(machine_id.to_string());
 
     // 根据 provider 设置 auth_method（profile_arn 由 get_usage_by_account 统一处理）
-    if provider == "BuilderId" || provider == "Enterprise" {
+    if provider.trim().eq_ignore_ascii_case("BuilderId")
+        || provider.trim().eq_ignore_ascii_case("Enterprise")
+    {
         temp_account.auth_method = Some("IdC".to_string());
     } else {
         temp_account.auth_method = Some("social".to_string());
@@ -649,12 +675,23 @@ fn parse_usage_result(result: Result<serde_json::Value, String>) -> Result<Usage
 }
 
 pub fn is_auth_error_message(error: &str) -> bool {
-    let lower = error.to_lowercase();
-    error.starts_with("AUTH_ERROR:")
-        || error.contains("401")
-        || error.contains("Unauthorized")
-        || lower.contains("expired")
-        || lower.contains("invalid")
+    let trimmed = error.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    trimmed.starts_with("AUTH_ERROR:")
+        || lower.contains("http 401")
+        || lower.contains("status 401")
+        || lower.contains("status: 401")
+        || lower.contains("401 unauthorized")
+        || lower.contains("unauthorized")
+        || lower.contains("invalid_token")
+        || lower.contains("expired_token")
+        || lower.contains("invalid token")
+        || lower.contains("token is invalid")
+        || lower.contains("token has expired")
+        || lower.contains("token expired")
+        || lower.contains("expired token")
+        || lower.contains("invalid_grant")
 }
 pub fn calc_expires_at(expires_in: i64) -> String {
     let now = chrono::Local::now();
@@ -785,7 +822,7 @@ pub fn find_existing_account_idx(
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_user_info, find_existing_account_idx, parse_usage_result,
+        extract_user_info, find_existing_account_idx, is_auth_error_message, parse_usage_result,
         resolve_kiro_call_context, resolve_profile_arn_from_candidates,
         resolve_profile_arn_with_fallback,
     };
@@ -880,6 +917,9 @@ mod tests {
         // 空白也视为缺失
         let resolved = resolve_idc_client_id_hash("BuilderId", Some("  "), Some("")).unwrap();
         assert_eq!(resolved, super::KIRO_BUILDER_ID_CLIENT_ID_HASH);
+
+        let resolved = resolve_idc_client_id_hash(" builderid ", None, None).unwrap();
+        assert_eq!(resolved, super::KIRO_BUILDER_ID_CLIENT_ID_HASH);
     }
 
     #[test]
@@ -949,6 +989,10 @@ mod tests {
             resolve_profile_arn_with_fallback(None, Some("Github")).as_deref(),
             Some(super::KIRO_SOCIAL_PROFILE_ARN)
         );
+        assert_eq!(
+            resolve_profile_arn_with_fallback(None, Some(" github ")).as_deref(),
+            Some(super::KIRO_SOCIAL_PROFILE_ARN)
+        );
     }
 
     #[test]
@@ -958,6 +1002,10 @@ mod tests {
                 Some("arn:aws:codewhisperer:us-east-1:123456789012:profile/IGNORED"),
                 Some("Enterprise"),
             ),
+            None
+        );
+        assert_eq!(
+            resolve_profile_arn_with_fallback(None, Some(" enterprise ")),
             None
         );
     }
@@ -1055,6 +1103,30 @@ mod tests {
         assert!(!auth_error.is_banned);
         assert!(auth_error.is_auth_error);
         assert_eq!(auth_error.usage_data, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn auth_error_detection_rejects_api_validation_errors() {
+        let invalid_profile =
+            "getUsageLimits failed - HTTP 400: {\"message\":\"Invalid profileArn\"}";
+
+        assert!(!is_auth_error_message(invalid_profile));
+        assert_eq!(
+            parse_usage_result(Err(invalid_profile.to_string())).unwrap_err(),
+            invalid_profile
+        );
+        assert!(!is_auth_error_message("HTTP 400: Invalid request"));
+        assert!(!is_auth_error_message("Subscription expired"));
+    }
+
+    #[test]
+    fn auth_error_detection_accepts_explicit_token_failures() {
+        assert!(is_auth_error_message("AUTH_ERROR: token expired"));
+        assert!(is_auth_error_message("request failed with HTTP 401"));
+        assert!(is_auth_error_message("401 Unauthorized"));
+        assert!(is_auth_error_message("OAuth invalid_token"));
+        assert!(is_auth_error_message("refresh token has expired"));
+        assert!(is_auth_error_message("invalid_grant"));
     }
 
     #[test]

@@ -8,7 +8,7 @@ import {
 } from '../../../../api/accountApi'
 import { addAccountBySocial } from '../../../../api/importApi'
 import { listen, emit, UnlistenFn } from '@tauri-apps/api/event'
-import { isUnavailableStatus } from '../../../../utils/accountStatus'
+import { isAuthenticationError, isUnavailableStatus } from '../../../../utils/accountStatus'
 import { normalizeAccountForUi, getSafeAccountDisplayName } from '../utils/accountRuntime'
 import { Account } from '../../../../types/account'
 
@@ -102,7 +102,7 @@ export function useAccounts() {
         const errorMsg = String(e)
         if (errorMsg.includes('BANNED')) {
           message = '账号已封禁'
-        } else if (errorMsg.includes('AUTH_ERROR') || errorMsg.includes('401') || errorMsg.includes('invalid') || errorMsg.includes('失效')) {
+        } else if (isAuthenticationError(errorMsg)) {
           message = '账号已失效'
         } else {
           message = errorMsg.slice(0, 50)
@@ -149,7 +149,7 @@ export function useAccounts() {
           await updateAccount({ id, status: 'banned' })
           setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: 'banned' } : a))
         } catch (updateErr) {}
-      } else if (errorMsg.includes('AUTH_ERROR') || errorMsg.includes('401') || errorMsg.includes('invalid')) {
+      } else if (isAuthenticationError(errorMsg)) {
         try {
           await updateAccount({ id, status: 'invalid' })
           setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: 'invalid' } : a))
