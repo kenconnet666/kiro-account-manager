@@ -1111,10 +1111,8 @@ mod tests {
             "getUsageLimits failed - HTTP 400: {\"message\":\"Invalid profileArn\"}";
 
         assert!(!is_auth_error_message(invalid_profile));
-        assert_eq!(
-            parse_usage_result(Err(invalid_profile.to_string())).unwrap_err(),
-            invalid_profile
-        );
+        let parse_error = parse_usage_result(Err(invalid_profile.to_string())).err();
+        assert_eq!(parse_error.as_deref(), Some(invalid_profile));
         assert!(!is_auth_error_message("HTTP 400: Invalid request"));
         assert!(!is_auth_error_message("Subscription expired"));
     }
