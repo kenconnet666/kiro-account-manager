@@ -67,9 +67,15 @@ jobs:
       - name: Build frontend
         run: bun run build
 
-      - name: Test Rust
+      - name: Compile Rust tests
         working-directory: src-tauri
-        run: cargo test --locked --all-features
+        run: cargo test --locked --all-features --no-run
+
+      - name: Test CLI account switching
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --all-features kiro::cli::tests
+          cargo test --locked --all-features commands::kiro_cli_cmd::tests
 
       - name: Check Rust formatting (advisory until upstream is clean)
         continue-on-error: true
