@@ -64,8 +64,7 @@ jobs:
           $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $cargoMetadata = cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | ConvertFrom-Json
           $cargoVersion = ($cargoMetadata.packages | Where-Object name -eq 'kiro-account-manager').version
-          $versions = @($packageVersion, $tauriVersion, $cargoVersion) | Select-Object -Unique
-          if ($versions.Count -ne 1 -or $versions[0] -ne $tagVersion) {
+          if ($packageVersion -ne $tagVersion -or $tauriVersion -ne $tagVersion -or $cargoVersion -ne $tagVersion) {
             throw "Version mismatch: tag=$tagVersion package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"
           }
 
