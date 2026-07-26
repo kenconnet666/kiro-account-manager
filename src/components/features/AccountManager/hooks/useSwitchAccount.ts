@@ -169,8 +169,6 @@ export function useSwitchAccount(onLocalTokenChange) {
       const settings = appSettings || {}
       refreshedAccount = await applyMachineGuid(refreshedAccount, settings)
 
-      const switchTarget = (switchDialog as any)?.switchTarget || (settings as any).switchTarget || 'ide'
-
       // IDE 切号
       if (switchTarget === 'ide' || switchTarget === 'both') {
         const params = buildSwitchParams(refreshedAccount)
