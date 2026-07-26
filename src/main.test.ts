@@ -8,6 +8,6 @@ assert.doesNotMatch(mainSource, /getCurrentWindow\(\)\.show\(\)/)
 assert.doesNotMatch(mainSource, /window\.__TAURI_INTERNALS__\?\.metadata\?\.currentWindow/)
 assert.doesNotMatch(mainSource, /invoke\('show_main_window'\)/)
 assert.match(appSource, /dismissBootSplash\(\)/)
-assert.match(appSource, /invoke\('show_main_window'\)/)
+assert.match(appSource, /showMainWindow\(\)/)
 
 console.log('main window reveal is deferred to App first paint stage')

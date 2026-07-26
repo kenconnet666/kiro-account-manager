@@ -11,6 +11,10 @@ import {
   formatGatewayAccountOptionLabel,
   parseClientApiKeys} from './gatewayPageUtils.js'
 
+const usageData = (usageLimit: number, currentUsage: number) => ({
+  usageBreakdownList: [{ usageLimit, currentUsage }]
+})
+
 test('gateway page does not expose the standalone account health dialog', async () => {
   const source = await readFile(new URL('./index.tsx', import.meta.url), 'utf8')
 
@@ -25,8 +29,7 @@ test('formatGatewayAccountOptionLabel shows email with quota and status', () => 
     userId: 'user-id-foo',
     id: 'abc',
     status: 'active',
-    quota: 100,
-    used: 30
+    usageData: usageData(100, 30)
   })
   assert.equal(label, 'foo@example.com 剩余 70/100')
 })
@@ -37,8 +40,7 @@ test('formatGatewayAccountOptionLabel shows banned status', () => {
     userId: 'user-id',
     id: 'def',
     status: 'banned',
-    quota: 100,
-    used: 95.0
+    usageData: usageData(100, 95)
   })
   // banned 账号是 unavailable 状态，getQuota/getUsed 返回 0
   assert.strictEqual(label, 'test@example.com 剩余 0/0 [banned]')
@@ -49,8 +51,7 @@ test('formatGatewayAccountOptionLabel falls back to userId when email is missing
     formatGatewayAccountOptionLabel({
       userId: 'builder-user-1',
       id: '0d24370c-1111-2222-3333-444455556666',
-      quota: 50,
-      used: 10
+      usageData: usageData(50, 10)
     }),
     'builder-user-1 剩余 40/50'
   )
@@ -58,8 +59,7 @@ test('formatGatewayAccountOptionLabel falls back to userId when email is missing
   assert.equal(
     formatGatewayAccountOptionLabel({
       id: '0d24370c-1111-2222-3333-444455556666',
-      quota: 0,
-      used: 0
+      usageData: usageData(0, 0)
     }),
     '未知账号 剩余 0/0'
   )
