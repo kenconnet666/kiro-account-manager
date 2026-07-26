@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "KiroAccountManager",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "identifier": "com.kiro.account-manager",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -51,7 +51,7 @@
     },
     "updater": {
       "endpoints": [
-        "https://github.com/hj01857655/kiro-account-manager/releases/latest/download/latest.json"
+        "https://github.com/kenconnet666/kiro-account-manager/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFREY2NUE1MTlEQzg3QjEKUldTeGg5d1pwV1hmanY3SG55V2VZWkd2SXhGeHhwWXgxUXFZR3NjWWdubFhidXNmc2JXVjZMVmUK",
       "windows": {
@@ -61,9 +61,9 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "category": "DeveloperTool",
-    "copyright": "© 2025 hj01857655",
+    "copyright": "© 2026 kenconnet666",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -71,7 +71,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "targets": ["msi", "app", "dmg", "deb", "rpm", "appimage"],
+    "targets": ["msi", "nsis", "app", "dmg", "deb", "rpm", "appimage"],
     "windows": {
       "allowDowngrades": false,
       "webviewInstallMode": {

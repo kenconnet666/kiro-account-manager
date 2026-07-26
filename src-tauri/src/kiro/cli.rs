@@ -28,6 +28,7 @@ pub struct KiroCliAccount {
     pub access_token: String,
     pub refresh_token: String,
     pub profile_arn: Option<String>,
+    pub provider: Option<String>,
     pub region: String,
     pub expires_at: Option<String>,
     pub scopes: Option<Vec<String>>,
@@ -167,6 +168,10 @@ fn read_token_from_db(conn: &Connection, key: &str) -> SqliteResult<KiroCliAccou
         .as_str()
         .map(std::string::ToString::to_string);
 
+    let provider = token_data["provider"]
+        .as_str()
+        .map(std::string::ToString::to_string);
+
     let start_url = token_data["start_url"]
         .as_str()
         .map(std::string::ToString::to_string);
@@ -190,6 +195,7 @@ fn read_token_from_db(conn: &Connection, key: &str) -> SqliteResult<KiroCliAccou
         access_token,
         refresh_token,
         profile_arn,
+        provider,
         region,
         expires_at,
         scopes,
@@ -673,5 +679,25 @@ mod tests {
             std::env::temp_dir().join(format!("kam_cli_missing_{}.sqlite3", uuid::Uuid::new_v4()));
         let result = logout_cli_account(&missing.to_string_lossy());
         assert!(result.is_err(), "数据库不存在应返回 Err");
+    }
+
+    #[test]
+    fn reads_provider_from_social_token() {
+        for provider in ["google", "github"] {
+            let db = make_temp_db();
+            let token = serde_json::json!({
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "profile_arn": "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+                "provider": provider
+            });
+            insert_kv(&db, "kirocli:social:token", &token.to_string());
+
+            let accounts = read_kiro_cli_accounts(&db).expect("read social account");
+            assert_eq!(accounts.len(), 1);
+            assert_eq!(accounts[0].provider.as_deref(), Some(provider));
+
+            let _ = std::fs::remove_file(&db);
+        }
     }
 }

@@ -89,14 +89,11 @@ export function useSwitchAccount(onLocalTokenChange) {
           await logoutKiroAccount()
         }
         if (switchTarget === 'cli' || switchTarget === 'both') {
-          try {
-            const cliPath = await getKiroCliDefaultPath()
-            if (cliPath) {
-              await logoutCliAccount(cliPath)
-            }
-          } catch (e) {
-            console.warn('[Logout] CLI 退出登录失败:', e)
+          const cliPath = await getKiroCliDefaultPath()
+          if (!cliPath) {
+            throw new Error('未检测到 Kiro CLI 数据库')
           }
+          await logoutCliAccount(cliPath)
         }
 
         // 刷新本地 token，使 LIVE 标识消失（账号记录仍留在列表中）
@@ -127,18 +124,20 @@ export function useSwitchAccount(onLocalTokenChange) {
       // 及 IdC 的 {clientIdHash}.json，切换本身就等同于首次登录。
       // 旧逻辑用 ide_installed（= 可执行文件存在「且」已有有效 token 文件）当门槛，
       // 因果倒置：要求文件先存在，却又让切换去创建它，导致未登录时被「请先首次登录」拦死。
-      const ideInfo = await checkIdeInstallation<InstallationInfo>()
-      const ideExecExists = ideInfo?.ide_executable_exists ?? ideInfo?.ide_installed ?? ideInfo?.ideInstalled ?? ideInfo?.installed
-      if (!ideExecExists) {
-        // 仅当可执行文件确实缺失时才阻断（IDE 未安装 / 自定义路径错误）。
-        const errorMsg = ideInfo?.error_message || t('switch.ideNotInstalledMessage')
-        setSwitchDialog({
-          type: 'error',
-          title: t('switch.ideNotInstalled'),
-          message: errorMsg,
-          account: null})
-        setSwitchingId(null)
-        return
+      if (switchTarget === 'ide' || switchTarget === 'both') {
+        const ideInfo = await checkIdeInstallation<InstallationInfo>()
+        const ideExecExists = ideInfo?.ide_executable_exists ?? ideInfo?.ide_installed ?? ideInfo?.ideInstalled ?? ideInfo?.installed
+        if (!ideExecExists) {
+          // 仅当可执行文件确实缺失时才阻断（IDE 未安装 / 自定义路径错误）。
+          const errorMsg = ideInfo?.error_message || t('switch.ideNotInstalledMessage')
+          setSwitchDialog({
+            type: 'error',
+            title: t('switch.ideNotInstalled'),
+            message: errorMsg,
+            account: null})
+          setSwitchingId(null)
+          return
+        }
       }
 
       // 检查 Token 是否过期或即将过期（1 小时内）
@@ -180,14 +179,11 @@ export function useSwitchAccount(onLocalTokenChange) {
 
       // CLI 切号
       if (switchTarget === 'cli' || switchTarget === 'both') {
-        try {
-          const cliPath = await getKiroCliDefaultPath()
-          if (cliPath) {
-            await switchToCliAccount(refreshedAccount.id, cliPath)
-          }
-        } catch (e) {
-          console.warn('[Switch] CLI 切号失败:', e)
+        const cliPath = await getKiroCliDefaultPath()
+        if (!cliPath) {
+          throw new Error('未检测到 Kiro CLI 数据库')
         }
+        await switchToCliAccount(refreshedAccount.id, cliPath)
       }
 
       // 更新当前账号标识

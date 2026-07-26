@@ -1,250 +1,101 @@
-name: Release
+name: Release Windows
 
 on:
   push:
     tags:
       - 'v*'
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
+  validate:
+    uses: ./.github/workflows/ci.yml
+
+  release-windows:
+    name: Build and publish Windows x64
+    needs: validate
+    runs-on: windows-2022
+    timeout-minutes: 90
     permissions:
       contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-2022
-            target: ''
-          - platform: windows-2022
-            target: 'aarch64-pc-windows-msvc'
-          - platform: macos-15-intel
-            target: 'x86_64-apple-darwin'
-          - platform: macos-latest
-            target: 'aarch64-apple-darwin'
-          - platform: ubuntu-22.04
-            target: ''
-          - platform: ubuntu-22.04-arm
-            target: ''
-
-    runs-on: ${{ matrix.platform }}
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0  # 获取完整 git 历史，用于生成 Release Notes
-
-      - name: Install Linux dependencies
-        if: startsWith(matrix.platform, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            lld \
-            xdg-utils \
-            rpm \
-            libfuse2
-
-      - name: Setup Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: 20
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          targets: x86_64-pc-windows-msvc
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          # 即使构建失败也保存缓存
           cache-on-failure: true
-          # 为不同平台使用不同的缓存 key
-          key: ${{ matrix.platform }}-${{ matrix.target || 'default' }}
-          # 跨 job 共享缓存（加快首次构建）
-          shared-key: "release"
+          shared-key: release-windows-x64
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.95.0
-          targets: ${{ matrix.target }}
-
-      # - name: Setup sccache
-      #   uses: mozilla-actions/sccache-action@2e7f9ec7921547d4b46598398ca573513895d0bd
-      #   with:
-      #     version: "v0.8.1"
-
-      # - name: Configure sccache
-      #   shell: bash
-      #   run: |
-      #     echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-      #     echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-
-      - name: Install macOS dependencies
-        if: startsWith(matrix.platform, 'macos')
-        run: brew install create-dmg
-
-      - name: Install dependencies
-        shell: bash
-        run: bun install
-
-      # 防呆校验：确保 CI 签名私钥与 tauri.conf.json 内置 pubkey 是同一对密钥。
-      # 历史教训：pubkey 被改过多次但 TAURI_SIGNING_PRIVATE_KEY secret 未同步，
-      # 导致 1.8.6-1.8.8 发布包用错误私钥签名，用户自动更新报
-      # "The signature was created with a different key than the one provided"。
-      # 不匹配时在昂贵的构建前直接失败，杜绝再次发出无法自动更新的版本。
-      - name: Verify updater signing key matches bundled pubkey
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Install NASM
+        shell: pwsh
         run: |
-          set -euo pipefail
-          PY=$(command -v python3 || command -v python)
+          choco install nasm -y --no-progress
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-          # 1) tauri.conf.json 内置 pubkey 的 key id（minisign 公钥注释行直接含 hex）
-          PUBKEY_B64=$(jq -r '.plugins.updater.pubkey' src-tauri/tauri.conf.json)
-          PUB_KEYID=$(printf '%s' "$PUBKEY_B64" | base64 -d \
-            | grep -i 'minisign public key' \
-            | grep -oiE '[0-9A-Fa-f]{16}' | head -1 | tr '[:upper:]' '[:lower:]' || true)
-          if [ -z "$PUB_KEYID" ]; then
-            echo "::error::无法从 tauri.conf.json 解析 pubkey 的 key id"; exit 1
-          fi
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
 
-          # 2) 用 CI 私钥签临时文件，从签名内嵌 key id 反推私钥身份（顺带验证密码 secret）
-          echo "kam-signing-key-check" > _keycheck.txt
-          if ! bun run tauri signer sign _keycheck.txt > _sign.out 2>&1; then
-            echo "::error::更新签名失败——TAURI_SIGNING_PRIVATE_KEY / _PASSWORD secret 配置有误"
-            cat _sign.out; rm -f _keycheck.txt _keycheck.txt.sig _sign.out; exit 1
-          fi
-          if [ ! -f _keycheck.txt.sig ]; then
-            echo "::error::签名成功但未找到 _keycheck.txt.sig"; cat _sign.out; rm -f _keycheck.txt _sign.out; exit 1
-          fi
-          # .sig 文件是单行 base64，需解两层：第一层得到 minisign 文本，取第2行裸签名再解一层，
-          # 结构为 [2字节算法][8字节 little-endian key id][签名]，故 b[2:10] 反转即 key id。
-          PRIV_KEYID=$("$PY" -c "import base64;raw=open('_keycheck.txt.sig','rb').read();b=base64.b64decode(base64.b64decode(raw).splitlines()[1]);print(b[2:10][::-1].hex())" || true)
-          rm -f _keycheck.txt _keycheck.txt.sig _sign.out
-          if ! printf '%s' "$PRIV_KEYID" | grep -qiE '^[0-9a-f]{16}$'; then
-            echo "::error::无法从签名解析出合法的私钥 key id（得到 '$PRIV_KEYID'），校验逻辑可能需要修正"; exit 1
-          fi
-
-          echo "bundled pubkey  key id (tauri.conf.json): $PUB_KEYID"
-          echo "signing privkey key id (CI secret)      : $PRIV_KEYID"
-          if [ "$PUB_KEYID" != "$PRIV_KEYID" ]; then
-            echo "::error::签名私钥($PRIV_KEYID) 与 tauri.conf.json 内置 pubkey($PUB_KEYID) 不匹配！发布后旧版用户自动更新会报 'The signature was created with a different key'。请同步 TAURI_SIGNING_PRIVATE_KEY secret 与 tauri.conf.json 的 pubkey。"
-            exit 1
-          fi
-          echo "✓ 签名私钥与内置 pubkey 匹配 ($PUB_KEYID)，自动更新签名校验可通过"
-
-      - name: Generate Release Notes
-        id: release_notes
-        shell: bash
+      - name: Verify tag and source versions
+        shell: pwsh
         run: |
-          # 获取上一个 tag
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          CURRENT_TAG=${{ github.ref_name }}
-          
-          # 生成更新日志
-          echo "## 🎉 更新内容" > release_notes.md
-          echo "" >> release_notes.md
-          
-          if [ -n "$PREVIOUS_TAG" ]; then
-            # 获取两个 tag 之间的 commits，过滤掉 docs/ci/chore/style/test 等内部开发相关的 commit
-            git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s" --no-merges | \
-              grep -v "^- docs:" | \
-              grep -v "^- ci:" | \
-              grep -v "^- chore:" | \
-              grep -v "^- style:" | \
-              grep -v "^- test:" >> release_notes.md
-          else
-            # 如果没有上一个 tag，获取最近 20 个 commits
-            git log -20 --pretty=format:"- %s" --no-merges | \
-              grep -v "^- docs:" | \
-              grep -v "^- ci:" | \
-              grep -v "^- chore:" | \
-              grep -v "^- style:" | \
-              grep -v "^- test:" >> release_notes.md
-          fi
-          
-          echo "" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "---" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "📥 **下载地址**：[GitHub Releases](https://github.com/${{ github.repository }}/releases/tag/${CURRENT_TAG})" >> release_notes.md
-          
-          # 输出到环境变量
-          cat release_notes.md
-          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoMetadata = cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | ConvertFrom-Json
+          $cargoVersion = ($cargoMetadata.packages | Where-Object name -eq 'kiro-account-manager').version
+          $versions = @($packageVersion, $tauriVersion, $cargoVersion) | Select-Object -Unique
+          if ($versions.Count -ne 1 -or $versions[0] -ne $tagVersion) {
+            throw "Version mismatch: tag=$tagVersion package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"
+          }
 
-      - name: Build and release
+      - name: Build installers and publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Linux AppImage 使用 gzip 压缩，兼容旧版 AppImageLauncher
-          APPIMAGETOOL_COMP: ${{ startsWith(matrix.platform, 'ubuntu') && 'gzip' || '' }}
         with:
           tagName: v__VERSION__
-          releaseName: 'Kiro Account Manager v__VERSION__'
-          releaseBody: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
+          releaseName: 'Kiro Account Manager v__VERSION__ (Lionheart)'
+          releaseBody: |
+            ## 本版本修复
+
+            - 修复 Kiro CLI 2.14.2 切换 Google/GitHub 后缺少 provider、显示未登录的问题
+            - CLI-only 切换不再依赖 Kiro IDE 安装状态
+            - CLI 数据库写入失败会明确显示失败，不再误报切换成功
+
+            此版本由 kenconnet666 的 fork 通过 GitHub Actions 构建。
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          args: --target x86_64-pc-windows-msvc --bundles msi,nsis
 
-  # 生成 deb/rpm 专用的更新 JSON
-  generate-linux-json:
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download latest.json
+      - name: Verify published installers
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${{ github.ref_name }}
-          gh release download "$VERSION" -p "latest.json" -R ${{ github.repository }} -O latest.json
-          cat latest.json
-
-      - name: Generate latest-deb.json
-        run: |
-          jq '
-            reduce (.platforms | keys[] | select(test("^linux-.*-deb$"))) as $key (.;
-              ($key | sub("-deb$"; "")) as $base |
-              .platforms[$base] = .platforms[$key]
-            )
-          ' latest.json > latest-deb.json
-          cat latest-deb.json
-
-      - name: Generate latest-rpm.json
-        run: |
-          jq '
-            reduce (.platforms | keys[] | select(test("^linux-.*-rpm$"))) as $key (.;
-              ($key | sub("-rpm$"; "")) as $base |
-              .platforms[$base] = .platforms[$key]
-            )
-          ' latest.json > latest-rpm.json
-          cat latest-rpm.json
-
-      - name: Upload JSON files to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=${{ github.ref_name }}
-          gh release upload "$VERSION" latest-deb.json latest-rpm.json --clobber -R ${{ github.repository }}
+          $assets = gh release view $env:GITHUB_REF_NAME --json assets --jq '.assets[].name'
+          $hasMsi = $assets | Where-Object { $_ -match '\.msi$' }
+          $hasExe = $assets | Where-Object { $_ -match '\.exe$' }
+          if (!$hasMsi -or !$hasExe) {
+            throw "Release is missing MSI or NSIS installer. Assets: $($assets -join ', ')"
+          }

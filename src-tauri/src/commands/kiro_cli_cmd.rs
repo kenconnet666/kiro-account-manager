@@ -81,8 +81,18 @@ fn expand_home_dir(path: &str) -> Result<String, String> {
 /// 的 provider，切回 IDE 时算出正确的 clientIdHash（issue #119）。
 fn determine_provider(cli_account: &crate::kiro::cli::KiroCliAccount) -> String {
     if cli_account.auth_method == "social" {
-        // Social Login，通过 profile_arn 判断
+        // Kiro CLI 2.14+ 会在 social token 中保存明确的 provider。
+        // profile_arn 对 Google/GitHub 通常相同，只能作为旧数据的兼容兜底。
+        if let Some(provider) = cli_account.provider.as_deref() {
+            match provider.trim().to_ascii_lowercase().as_str() {
+                "google" => return "Google".to_string(),
+                "github" => return "Github".to_string(),
+                _ => {}
+            }
+        }
+
         if let Some(ref arn) = cli_account.profile_arn {
+            let arn = arn.to_ascii_lowercase();
             if arn.contains("google") {
                 return "Google".to_string();
             } else if arn.contains("github") {
@@ -661,6 +671,7 @@ fn build_switch_payload(
     } else {
         // Social token：带 start_url 与 profile_arn
         token_data["start_url"] = serde_json::json!(DEFAULT_START_URL);
+        token_data["provider"] = serde_json::json!(provider.to_ascii_lowercase());
         let profile_arn = account
             .profile_arn
             .as_deref()
@@ -704,8 +715,35 @@ fn build_switch_payload(
 
 #[cfg(test)]
 mod tests {
-    use super::lock_account_store;
+    use super::{build_switch_payload, determine_provider, lock_account_store};
+    use crate::core::account::Account;
+    use crate::kiro::cli::KiroCliAccount;
     use std::sync::Mutex;
+
+    fn social_cli_account(provider: Option<&str>, profile_arn: Option<&str>) -> KiroCliAccount {
+        KiroCliAccount {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            profile_arn: profile_arn.map(str::to_string),
+            provider: provider.map(str::to_string),
+            region: "us-east-1".to_string(),
+            expires_at: None,
+            scopes: None,
+            auth_method: "social".to_string(),
+            token_key: "kirocli:social:token".to_string(),
+            client_id: None,
+            client_secret: None,
+            start_url: None,
+        }
+    }
+
+    fn social_account(provider: &str) -> Account {
+        let mut account = Account::new("user@example.com".to_string(), "test".to_string());
+        account.provider = Some(provider.to_string());
+        account.access_token = Some("access-token".to_string());
+        account.refresh_token = Some("refresh-token".to_string());
+        account
+    }
 
     #[test]
     fn lock_account_store_returns_error_when_mutex_is_poisoned() {
@@ -717,5 +755,24 @@ mod tests {
 
         let err = lock_account_store(&mutex).expect_err("poisoned mutex should return error");
         assert!(err.contains("store lock"));
+    }
+
+    #[test]
+    fn explicit_social_provider_takes_priority_over_profile_arn() {
+        let account = social_cli_account(Some("GiThUb"), Some("profile/google"));
+        assert_eq!(determine_provider(&account), "Github");
+    }
+
+    #[test]
+    fn social_switch_payload_contains_lowercase_provider() {
+        for (account_provider, cli_provider) in [("Google", "google"), ("Github", "github")] {
+            let payload = build_switch_payload(&social_account(account_provider))
+                .expect("build social switch payload");
+            let token: serde_json::Value =
+                serde_json::from_str(&payload.token_value).expect("parse token payload");
+
+            assert_eq!(payload.token_key, "kirocli:social:token");
+            assert_eq!(token["provider"], cli_provider);
+        }
     }
 }
