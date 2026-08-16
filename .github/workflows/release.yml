@@ -78,9 +78,8 @@ jobs:
           releaseBody: |
             ## 本版本修复
 
-            - 修复 Google/GitHub/BuilderId 配额请求遗漏 profileArn 导致额度获取异常的问题
-            - 修复认证失败与封禁状态误判，避免正常账号被错误标记
-            - Enterprise 配额请求继续不携带 profileArn，保持企业账号兼容性
+            - 修复网关客户端 API Key 带名称前缀（如 "Key 1:sk-xxx"）导致第三方客户端（CC Switch 等）鉴权 401 的问题，网关鉴权现会自动剥离名称前缀
+            - 网关新增 GET /models 兼容别名路由，修复 CC Switch 等客户端获取模型列表失败的问题
 
             此版本由 kenconnet666 的 fork 通过 GitHub Actions 构建。
           releaseDraft: false

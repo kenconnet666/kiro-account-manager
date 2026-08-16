@@ -463,6 +463,15 @@ impl Default for GatewayConfig {
         }
     }
 }
+/// 剥离 API Key 的名称前缀（前端 ApiKeysDialog 会序列化为 "名称:密钥"，如 "Key 1:sk-xxx"）
+/// 解析规则与前端 parseApiKeys 保持一致：冒号前非空且整体不以 sk- 开头时视为名称前缀
+fn strip_api_key_name_prefix(key: &str) -> String {
+    match key.find(':') {
+        Some(idx) if idx > 0 && !key.starts_with("sk-") => key[idx + 1..].to_string(),
+        _ => key.to_string(),
+    }
+}
+
 pub(crate) fn effective_client_api_keys(config: &GatewayConfig) -> Vec<String> {
     let mut keys = Vec::new();
 
@@ -474,7 +483,7 @@ pub(crate) fn effective_client_api_keys(config: &GatewayConfig) -> Vec<String> {
         .filter(|value| !value.starts_with("#disabled#"))
     // 过滤禁用的 Key
     {
-        keys.push(key.to_string());
+        keys.push(strip_api_key_name_prefix(key));
     }
 
     for key in config
@@ -485,8 +494,9 @@ pub(crate) fn effective_client_api_keys(config: &GatewayConfig) -> Vec<String> {
         .filter(|item| !item.starts_with("#disabled#"))
     // 过滤禁用的 Key
     {
-        if !keys.iter().any(|existing| existing == key) {
-            keys.push(key.to_string());
+        let normalized = strip_api_key_name_prefix(key);
+        if !keys.iter().any(|existing| existing == &normalized) {
+            keys.push(normalized);
         }
     }
 
@@ -1043,6 +1053,8 @@ fn router(state: RouterState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
         .route("/v1/models", get(models_handler))
+        // 兼容别名：部分客户端（如 CC Switch 在 baseURL 带 /v1 版本段时）会请求 {base}/models
+        .route("/models", get(models_handler))
         .route("/v1/messages", post(anthropic_messages_handler))
         .route(
             "/v1/messages/count_tokens",
@@ -1256,6 +1268,23 @@ mod tests {
     static REQUEST_LOG_TEST_MUTEX: Mutex<()> = Mutex::new(());
     static REQUEST_LOG_TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    #[test]
+    fn effective_client_api_keys_strips_name_prefix() {
+        let config = GatewayConfig {
+            access_token: Some("Key 1:sk-primary".to_string()),
+            client_api_keys: vec![
+                "Key 1:sk-primary".to_string(),
+                "Key 2:sk-secondary".to_string(),
+                "sk-plain".to_string(),
+            ],
+            ..GatewayConfig::default()
+        };
+        assert_eq!(
+            effective_client_api_keys(&config),
+            vec!["sk-primary", "sk-secondary", "sk-plain"]
+        );
+    }
+
     struct RequestLogTestFixture {
         path: PathBuf,
         _guard: std::sync::MutexGuard<'static, ()>,
@@ -1359,6 +1388,23 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri("/health")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("router should respond");
+
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn models_alias_route_is_reachable() {
+        let app = router(test_router_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/models")
                     .body(Body::empty())
                     .expect("request should build"),
             )
