@@ -76,10 +76,11 @@ jobs:
           tagName: v__VERSION__
           releaseName: 'Kiro Account Manager v__VERSION__ (Lionheart)'
           releaseBody: |
-            ## 本版本修复
+            ## 本版本变更
 
-            - 修复网关客户端 API Key 带名称前缀（如 "Key 1:sk-xxx"）导致第三方客户端（CC Switch 等）鉴权 401 的问题，网关鉴权现会自动剥离名称前缀
-            - 网关新增 GET /models 兼容别名路由，修复 CC Switch 等客户端获取模型列表失败的问题
+            - 重构核心模块结构：优化会话管理、命令处理、存储机制、模型锁与托盘行为等模块
+            - 调整构建配置与数据模型结构，功能保持兼容
+            - 继承 v1.9.5：网关 API Key 名称前缀剥离、GET /models 兼容路由（CC Switch 支持）
 
             此版本由 kenconnet666 的 fork 通过 GitHub Actions 构建。
           releaseDraft: false
